@@ -1,0 +1,772 @@
+import streamlit as st
+from PIL import Image
+import re
+import pandas as pd
+from urllib.parse import urlparse
+from tld import get_tld
+import tldextract
+import pickle as pkl
+import socket
+from urllib.parse import urlparse
+import requests
+import dns.resolver
+import folium
+from streamlit_folium import folium_static
+import hashlib
+from datetime import datetime
+import OpenSSL,ssl
+
+def get_domain(url):
+    parser = urlparse(url)
+    if parser.netloc == 'bit.ly':
+        try:
+            url = urlopen(url).geturl()
+            parser = urlparse(url)
+            parts = parser.netloc.split(".")
+            if len(parts) > 2:
+                subdomain = parts[0]
+                root_domain = ".".join(parts[1:])
+                return root_domain
+            elif len(parts) == 2:
+                subdomain = None
+                root_domain = ".".join(parts)
+                return root_domain
+            else:
+                return parser.netloc
+        except urllib.error.HTTPError as e:
+            return 0
+        except urllib.error.URLError as e:
+            return 0
+    parts = parser.netloc.split(".")
+    if len(parts) > 2:
+        subdomain = parts[0]
+        root_domain = ".".join(parts[1:])
+        return root_domain
+    elif len(parts) == 2:
+        subdomain = None
+        root_domain = ".".join(parts)
+        return root_domain
+    else:
+        return parser.netloc
+def whois_lookup(domain):
+    whois_server = "whois.iana.org"
+    port = 43
+
+    # Connect to the WHOIS server
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((whois_server, port))
+
+        # Send the domain query
+        s.sendall(f"{domain}\r\n".encode())
+
+        # Receive and store the response
+        response = b""
+        while True:
+            data = s.recv(4096)
+            if not data:
+                break
+            response += data
+
+    return response.decode()
+
+def get_geolocation(ip_address, api_key):
+    url = f"https://ipinfo.io/{ip_address}/json?token={api_key}"
+
+    try:
+        response = requests.get(url)
+        data = response.json()
+
+        if 'loc' in data:
+            latitude, longitude = data['loc'].split(',')
+            return {
+                'latitude': float(latitude),
+                'longitude': float(longitude)
+            }
+        else:
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        return None
+
+
+
+def extract_whois_data(whois_response):
+    lines = whois_response.splitlines()
+    relevant_info = {}
+
+    for line in lines:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key in ['domain', 'organisation', 'address', 'whois', 'status', 'remarks', 'created', 'changed', 'source']:
+                relevant_info[key.capitalize()] = value
+
+    return relevant_info
+
+def having_ip_address(url):
+    match = re.search(
+        '(([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\.([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\.'
+        '([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\.([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\/)|'  # IPv4
+        '((0x[0-9a-fA-F]{1,2})\\.(0x[0-9a-fA-F]{1,2})\\.(0x[0-9a-fA-F]{1,2})\\.(0x[0-9a-fA-F]{1,2})\\/)' # IPv4 in hexadecimal
+        '(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}', url)  # Ipv6
+    if match:
+        return 1
+    else:
+        return 0
+
+# df['use_of_ip'] = df['url'].apply(lambda i: having_ip_address(i))
+
+def abnormal_url(url):
+    hostname = urlparse(url).hostname
+    hostname = str(hostname)
+    match = re.search(hostname, url)
+    if match:
+        return 1
+    else:
+        return 0
+
+# df['abnormal_url'] = df['url'].apply(lambda i: abnormal_url(i))
+
+
+def count_dot(url):
+    return url.count('.')
+
+# df['count.'] = df['url'].apply(lambda i: count_dot(i))
+
+def count_www(url):
+    return url.count('www')
+
+# df['count-www'] = df['url'].apply(lambda i: count_www(i))
+
+def count_atrate(url):
+    return url.count('@')
+
+# df['count@'] = df['url'].apply(lambda i: count_atrate(i))
+
+def no_of_dir(url):
+    urldir = urlparse(url).path
+    return urldir.count('/')
+
+# df['count_dir'] = df['url'].apply(lambda i: no_of_dir(i))
+
+def no_of_embed(url):
+    urldir = urlparse(url).path
+    return urldir.count('//')
+
+# df['count_embed_domian'] = df['url'].apply(lambda i: no_of_embed(i))
+
+def shortening_service(url):
+    match = re.search('bit\.ly|goo\.gl|shorte\.st|go2l\.ink|x\.co|ow\.ly|t\.co|tinyurl|tr\.im|is\.gd|cli\.gs|'
+                      'yfrog\.com|migre\.me|ff\.im|tiny\.cc|url4\.eu|twit\.ac|su\.pr|twurl\.nl|snipurl\.com|'
+                      'short\.to|BudURL\.com|ping\.fm|post\.ly|Just\.as|bkite\.com|snipr\.com|fic\.kr|loopt\.us|'
+                      'doiop\.com|short\.ie|kl\.am|wp\.me|rubyurl\.com|om\.ly|to\.ly|bit\.do|t\.co|lnkd\.in|'
+                      'db\.tt|qr\.ae|adf\.ly|goo\.gl|bitly\.com|cur\.lv|tinyurl\.com|ow\.ly|bit\.ly|ity\.im|'
+                      'q\.gs|is\.gd|po\.st|bc\.vc|twitthis\.com|u\.to|j\.mp|buzurl\.com|cutt\.us|u\.bb|yourls\.org|'
+                      'x\.co|prettylinkpro\.com|scrnch\.me|filoops\.info|vzturl\.com|qr\.net|1url\.com|tweez\.me|v\.gd|'
+                      'tr\.im|link\.zip\.net',
+                      url)
+    if match:
+        return 1
+    else:
+        return 0
+
+# df['short_url'] = df['url'].apply(lambda i: shortening_service(i))
+
+def count_https(url):
+    return url.count('https')
+
+# df['count-https'] = df['url'].apply(lambda i: count_https(i))
+
+def suspicious_words(url):
+    match = re.search('PayPal|login|signin|bank|account|update|free|lucky|service|bonus|ebayisapi|webscr',
+                      url)
+    if match:
+        return 1
+    else:
+        return 0
+
+# df['sus_url'] = df['url'].apply(lambda i: suspicious_words(i))
+
+def digit_count(url):
+    digits = 0
+    for i in url:
+        if i.isnumeric():
+            digits = digits + 1
+    return digits
+
+# df['count-digits']= df['url'].apply(lambda i: digit_count(i))
+
+def letter_count(url):
+    letters = 0
+    for i in url:
+        if i.isalpha():
+            letters = letters + 1
+    return letters
+
+# df['count-letters']= df['url'].apply(lambda i: letter_count(i))
+
+def fd_length(url):
+    urlpath = urlparse(url).path
+    try:
+        return len(urlpath.split('/')[1])
+    except:
+        return 0
+
+# df['fd_length'] = df['url'].apply(lambda i: fd_length(i))
+
+def get_tld(url):
+    try:
+        return tldextract.extract(url).suffix
+    except:
+        return None
+# df['tld']=df['url'].apply(lambda i: get_tld(i))
+# Function to get the length of the top-level domain (TLD)
+def tld_length(tld):
+    return len(tld) if pd.notnull(tld) else -1
+
+# df['tld_length'] = df['tld'].apply(lambda i: len(i))
+
+def performwhois(url):
+    try:
+        result = whois.whois(url)
+        return 1 #success
+    except Exception:
+        return 0
+
+def extract_pri_domain(url):
+    try:
+        parsed_url = urlparse(url)
+        pri_domain = parsed_url.netloc
+        filter = r"(?:www\.)?([\w\-]+\.[\w\-]{2,})"
+        match = re.search(filter, pri_domain)
+
+        if match:
+          pri_domain = match.group(1)
+    except :
+        pri_domain= 0
+    return pri_domain
+
+def get_NS_record(domain):
+    #domain = get_domain(url)
+    try:
+        ns_records = dns.resolver.resolve(domain, 'NS')
+        return 1
+
+    except dns.resolver.NXDOMAIN as e:
+        return 0
+    except dns.resolver.NoAnswer as e:
+        return 0
+    except dns.resolver.Timeout as e:
+        return 0
+    except Exception as e:
+        return 0
+
+
+def get_MX_record(domain):
+    #domain = get_domain(url)
+    try:
+        mx_records = dns.resolver.resolve(domain, 'MX')
+        return 1
+
+    except dns.resolver.NXDOMAIN as e:
+        return 0
+    except dns.resolver.NoAnswer as e:
+        return 0
+    except dns.resolver.Timeout as e:
+        return 0
+    except Exception as e:
+        return 0
+
+
+def get_aaaa_record(url):
+     try:
+        answers = dns.resolver.resolve(url, 'AAAA')
+        return 1
+     except dns.exception.Timeout:
+        return 0
+     except dns.resolver.NoNameservers:
+        return 0
+     except dns.resolver.NXDOMAIN:
+        return 0
+     except dns.resolver.NoAnswer:
+        return 0
+
+def get_a_record(domain):
+    try:
+        answers = dns.resolver.resolve(domain, 'A')
+        return 1
+    except dns.exception.Timeout:
+        return 0
+    except dns.resolver.NoNameservers:
+        return 0
+    except dns.resolver.NXDOMAIN:
+        return 0
+    except dns.resolver.NoAnswer:
+        return 0
+
+#dnssec certificate verification
+def verify_dnssec(domain):
+    try:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.use_edns(0, dns.flags.DO | dns.flags.AD | dns.flags.CD)
+        resolver.nameservers = ['8.8.8.8', '8.8.4.4']
+
+        dnskeys = resolver.resolve(domain, dns.rdatatype.DNSKEY)
+        if dnskeys.response.rcode() == dns.rcode.NOERROR:
+            return 1  # DNSSEC validation passed
+        else:
+            return -1  # DNSSEC validation failed
+
+    except dns.resolver.NXDOMAIN:
+        return 0  # Domain not found
+    except (dns.resolver.NoAnswer, dns.resolver.NoNameservers):
+        return 0  # No DNSKEY records or nameservers found
+
+    except Exception:
+        return 0  # Other errors
+
+def get_url_region(primary_domain):
+    ccTLD_to_region = {
+    ".ac": "Ascension Island",    ".ad": "Andorra",    ".ae": "United Arab Emirates",    ".af": "Afghanistan",    ".ag": "Antigua and Barbuda",    ".ai": "Anguilla",
+    ".al": "Albania",    ".am": "Armenia",    ".an": "Netherlands Antilles",    ".ao": "Angola",    ".aq": "Antarctica",    ".ar": "Argentina",
+    ".as": "American Samoa",    ".at": "Austria",    ".au": "Australia",    ".aw": "Aruba",    ".ax": "Åland Islands",    ".az": "Azerbaijan",
+    ".ba": "Bosnia and Herzegovina",    ".bb": "Barbados",    ".bd": "Bangladesh",    ".be": "Belgium",    ".bf": "Burkina Faso",    ".bg": "Bulgaria",
+    ".bh": "Bahrain",    ".bi": "Burundi",    ".bj": "Benin",    ".bm": "Bermuda",    ".bn": "Brunei Darussalam",    ".bo": "Bolivia",
+    ".br": "Brazil",    ".bs": "Bahamas",    ".bt": "Bhutan",    ".bv": "Bouvet Island",    ".bw": "Botswana",    ".by": "Belarus",
+    ".bz": "Belize",    ".ca": "Canada",    ".cc": "Cocos Islands",    ".cd": "Democratic Republic of the Congo",    ".cf": "Central African Republic",    ".cg": "Republic of the Congo",
+    ".ch": "Switzerland",    ".ci": "Côte d'Ivoire",    ".ck": "Cook Islands",    ".cl": "Chile",    ".cm": "Cameroon",    ".cn": "China",
+    ".co": "Colombia",    ".cr": "Costa Rica",    ".cu": "Cuba",    ".cv": "Cape Verde",    ".cw": "Curaçao",    ".cx": "Christmas Island",
+    ".cy": "Cyprus",    ".cz": "Czech Republic",    ".de": "Germany",    ".dj": "Djibouti",    ".dk": "Denmark",    ".dm": "Dominica",
+    ".do": "Dominican Republic",    ".dz": "Algeria",    ".ec": "Ecuador",    ".ee": "Estonia",    ".eg": "Egypt",    ".er": "Eritrea",
+    ".es": "Spain",    ".et": "Ethiopia",    ".eu": "European Union",    ".fi": "Finland",    ".fj": "Fiji",    ".fk": "Falkland Islands",
+    ".fm": "Federated States of Micronesia",    ".fo": "Faroe Islands",    ".fr": "France",    ".ga": "Gabon",    ".gb": "United Kingdom",    ".gd": "Grenada",
+    ".ge": "Georgia",    ".gf": "French Guiana",    ".gg": "Guernsey",    ".gh": "Ghana",    ".gi": "Gibraltar",    ".gl": "Greenland",
+    ".gm": "Gambia",    ".gn": "Guinea",    ".gp": "Guadeloupe",    ".gq": "Equatorial Guinea",    ".gr": "Greece",    ".gs": "South Georgia and the South Sandwich Islands",
+    ".gt": "Guatemala",    ".gu": "Guam",    ".gw": "Guinea-Bissau",    ".gy": "Guyana",    ".hk": "Hong Kong",    ".hm": "Heard Island and McDonald Islands",
+    ".hn": "Honduras",    ".hr": "Croatia",    ".ht": "Haiti",    ".hu": "Hungary",    ".id": "Indonesia",    ".ie": "Ireland",
+    ".il": "Israel",    ".im": "Isle of Man",    ".in": "India",    ".io": "British Indian Ocean Territory",    ".iq": "Iraq",    ".ir": "Iran",
+    ".is": "Iceland",    ".it": "Italy",    ".je": "Jersey",    ".jm": "Jamaica",    ".jo": "Jordan",    ".jp": "Japan",
+    ".ke": "Kenya",    ".kg": "Kyrgyzstan",    ".kh": "Cambodia",    ".ki": "Kiribati",    ".km": "Comoros",    ".kn": "Saint Kitts and Nevis",
+    ".kp": "Democratic People's Republic of Korea (North Korea)",    ".kr": "Republic of Korea (South Korea)",    ".kw": "Kuwait",    ".ky": "Cayman Islands",    ".kz": "Kazakhstan",    ".la": "Laos",
+    ".lb": "Lebanon",    ".lc": "Saint Lucia",    ".li": "Liechtenstein",    ".lk": "Sri Lanka",    ".lr": "Liberia",    ".ls": "Lesotho",
+    ".lt": "Lithuania",    ".lu": "Luxembourg",    ".lv": "Latvia",    ".ly": "Libya",    ".ma": "Morocco",    ".mc": "Monaco",
+    ".md": "Moldova",    ".me": "Montenegro",    ".mf": "Saint Martin (French part)",    ".mg": "Madagascar",    ".mh": "Marshall Islands",    ".mk": "North Macedonia",
+    ".ml": "Mali",    ".mm": "Myanmar",    ".mn": "Mongolia",    ".mo": "Macao",    ".mp": "Northern Mariana Islands",    ".mq": "Martinique",
+    ".mr": "Mauritania",    ".ms": "Montserrat",    ".mt": "Malta",    ".mu": "Mauritius",    ".mv": "Maldives",    ".mw": "Malawi",
+    ".mx": "Mexico",    ".my": "Malaysia",    ".mz": "Mozambique",    ".na": "Namibia",    ".nc": "New Caledonia",    ".ne": "Niger",
+    ".nf": "Norfolk Island",    ".ng": "Nigeria",    ".ni": "Nicaragua",    ".nl": "Netherlands",    ".no": "Norway",    ".np": "Nepal",
+    ".nr": "Nauru",    ".nu": "Niue",    ".nz": "New Zealand",    ".om": "Oman",    ".pa": "Panama",    ".pe": "Peru",
+    ".pf": "French Polynesia",    ".pg": "Papua New Guinea",    ".ph": "Philippines",    ".pk": "Pakistan",    ".pl": "Poland",    ".pm": "Saint Pierre and Miquelon",
+    ".pn": "Pitcairn",    ".pr": "Puerto Rico",    ".ps": "Palestinian Territory",    ".pt": "Portugal",    ".pw": "Palau",    ".py": "Paraguay",
+    ".qa": "Qatar",    ".re": "Réunion",    ".ro": "Romania",    ".rs": "Serbia",    ".ru": "Russia",    ".rw": "Rwanda",
+    ".sa": "Saudi Arabia",    ".sb": "Solomon Islands",    ".sc": "Seychelles",    ".sd": "Sudan",    ".se": "Sweden",    ".sg": "Singapore",
+    ".sh": "Saint Helena",    ".si": "Slovenia",    ".sj": "Svalbard and Jan Mayen",    ".sk": "Slovakia",    ".sl": "Sierra Leone",    ".sm": "San Marino",
+    ".sn": "Senegal",    ".so": "Somalia",    ".sr": "Suriname",    ".ss": "South Sudan",    ".st": "São Tomé and Príncipe",    ".sv": "El Salvador",
+    ".sx": "Sint Maarten (Dutch part)",    ".sy": "Syria",    ".sz": "Eswatini",    ".tc": "Turks and Caicos Islands",    ".td": "Chad",    ".tf": "French Southern Territories",
+    ".tg": "Togo",    ".th": "Thailand",    ".tj": "Tajikistan",    ".tk": "Tokelau",    ".tl": "Timor-Leste",    ".tm": "Turkmenistan",
+    ".tn": "Tunisia",    ".to": "Tonga",    ".tr": "Turkey",    ".tt": "Trinidad and Tobago",    ".tv": "Tuvalu",    ".tw": "Taiwan",
+    ".tz": "Tanzania",    ".ua": "Ukraine",    ".ug": "Uganda",    ".uk": "United Kingdom",    ".us": "United States",    ".uy": "Uruguay",
+    ".uz": "Uzbekistan",    ".va": "Vatican City",    ".vc": "Saint Vincent and the Grenadines",    ".ve": "Venezuela",    ".vg": "British Virgin Islands",    ".vi": "U.S. Virgin Islands",
+    ".vn": "Vietnam",    ".vu": "Vanuatu",    ".wf": "Wallis and Futuna",    ".ws": "Samoa",    ".ye": "Yemen",    ".yt": "Mayotte",
+    ".za": "South Africa",    ".zm": "Zambia",    ".zw": "Zimbabwe"
+    }
+    for ccTLD in ccTLD_to_region:
+        if primary_domain.endswith(ccTLD):
+            return ccTLD_to_region[ccTLD]
+
+    return "Global"
+
+def extract_root_domain(url):
+    extracted = tldextract.extract(url)
+    root_domain = extracted.domain
+    return root_domain
+
+def hash_encode(category):
+    hash_object = hashlib.md5(category.encode())
+    return int(hash_object.hexdigest(),16)%(10**8)
+
+def get_ssl_certificate(url):
+    try:
+        hostname = url.replace("https://", "").replace("http://", "")
+        cert = ssl.get_server_certificate((hostname, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        certificate = {
+            'subject': dict(x509.get_subject().get_components()),
+            'issuer': dict(x509.get_issuer().get_components()),
+            'notBefore': x509.get_notBefore().decode('utf-8'),
+            'notAfter': x509.get_notAfter().decode('utf-8'),
+        }
+        return certificate
+    except Exception as e:
+        return None
+
+def get_ssl_certificate(url):
+    try:
+        hostname = url.replace("https://", "").replace("http://", "")
+        cert = ssl.get_server_certificate((hostname, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        certificate = {
+            'subject': dict(x509.get_subject().get_components()),
+            'issuer': dict(x509.get_issuer().get_components()),
+            'notBefore': x509.get_notBefore().decode('utf-8'),
+            'notAfter': x509.get_notAfter().decode('utf-8'),
+        }
+        return certificate
+    except Exception as e:
+        return None
+
+def dateproper(datee):
+    datee = datetime.strptime(str(datee), "%Y%m%d%H%M%S%z")
+    datee = datee.strftime("%Y-%m-%d %H:%M:%S")
+    return datee
+
+def is_phishing_website(url):
+    certificate = get_ssl_certificate(url)
+    SSL_Certificate_Information = {}
+    if certificate:
+        SSL_Certificate_Information["Common Name (CN)"] = certificate['subject'][b'CN'].decode('utf-8')
+        SSL_Certificate_Information["Issuer"] = certificate['issuer'][b'CN'].decode('utf-8')
+        SSL_Certificate_Information["Valid From"] = dateproper(certificate['notBefore'])
+        SSL_Certificate_Information["Valid Until"] = dateproper(certificate['notAfter'])
+    return SSL_Certificate_Information
+
+
+def extract_subdomain_and_root_domain(url):
+    # Parse the URL to get its components
+    parsed_url = urlparse(url)
+    
+    # Extract the netloc part (which contains the subdomain and root domain)
+    netloc = parsed_url.netloc
+    
+    # Split the netloc by dots to get the subdomain and root domain
+    parts = netloc.split(".")
+    if len(parts) > 2:
+        subdomain = parts[0]
+        root_domain = ".".join(parts[1:])
+        return netloc, subdomain, root_domain
+    elif len(parts) == 2:
+        subdomain = None
+        root_domain = ".".join(parts)
+        return netloc, subdomain, root_domain
+    else:
+        return None, None, None
+
+dns_store={}
+
+def get_dns_records(url):
+    domain, subdomain, root_domain = extract_subdomain_and_root_domain(url)
+    li1 = ['A', 'AAAA', 'CNAME']
+    #A, AAAA, CNAME records (use domain name)
+    for i in li1:
+        try:
+            answers = dns.resolver.resolve(domain, i)
+            dns_store[i] = [rdata for rdata in answers]
+
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, Exception) as e:
+            # None
+            dns_store[i] = None
+
+    #NS, MX (use root domain)
+    li2 = ['NS', 'MX']
+    for i in li2:
+        try:
+            records = dns.resolver.resolve(root_domain, i)
+            dns_store[i] = [record.to_text() for record in records]
+            
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, Exception) as e:
+            dns_store[i] = None
+            
+    # TXT Record
+    try:
+        answers= dns.resolver.resolve(root_domain, 'TXT')
+        dns_store['TXT'] = [rdata for rdata in answers]
+    
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, Exception) as e:
+        dns_store[i] = None
+ 
+    #CAA Records
+    try:
+        answers = dns.resolver.resolve(root_domain, 'CAA')
+        dns_store['CAA'] = [rdata for rdata in answers]
+            
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, Exception) as e:
+        dns_store[i] = None
+    
+    return dns_store
+
+def feature_extraction(df):
+  #try
+  df['domain'] = df['url'].apply(lambda i: get_domain(i))
+  df['A'] = df['domain'].apply(lambda x: get_a_record(x))
+  df['AAAA'] = df['domain'].apply(lambda x: get_aaaa_record(x))
+  df['NS'] = df['domain'].apply(lambda x: get_NS_record(x))
+  df['MX'] = df['domain'].apply(lambda x: get_MX_record(x))
+  df['DNSSEC Validation'] = df['domain'].apply(lambda x: verify_dnssec(x))
+
+  df['use_of_ip'] = df['url'].apply(lambda i: having_ip_address(i))
+  df['abnormal_url'] = df['url'].apply(lambda i: abnormal_url(i))
+  df['count.'] = df['url'].apply(lambda i: count_dot(i))
+  df['count-www'] = df['url'].apply(lambda i: count_www(i))
+  df['count@'] = df['url'].apply(lambda i: count_atrate(i))
+  df['count_dir'] = df['url'].apply(lambda i: no_of_dir(i))
+  df['count_embed_domian'] = df['url'].apply(lambda i: no_of_embed(i))
+  df['short_url'] = df['url'].apply(lambda i: shortening_service(i))
+  df['count-https'] = df['url'].apply(lambda i: count_https(i))
+  df['sus_url'] = df['url'].apply(lambda i: suspicious_words(i))
+  df['count-digits']= df['url'].apply(lambda i: digit_count(i))
+  df['count-letters']= df['url'].apply(lambda i: letter_count(i))
+  df['fd_length'] = df['url'].apply(lambda i: fd_length(i))
+  df['tld']=df['url'].apply(lambda i: get_tld(i))
+  df['tld_length'] = df['tld'].apply(lambda i: len(i))
+  #df["count-https"] = df["url"].apply(lambda i: i.count("https"))
+  df["count-http"] = df["url"].apply(lambda i: i.count("http"))
+  df["count%"] = df["url"].apply(lambda i: i.count("%"))
+  df["count?"] = df["url"].apply(lambda i: i.count("?"))
+  df["count-"] = df["url"].apply(lambda i: i.count("-"))
+  df["count="] = df["url"].apply(lambda i: i.count("="))
+  df["url_length"] = df["url"].apply(lambda i: len(str(i)))
+  df["hostname_length"] = df["url"].apply(lambda i: len(urlparse(i).netloc))
+
+  df['pri_domain'] = df['url'].apply(lambda x: extract_pri_domain(x))
+  df['url_region'] = df['pri_domain'].apply(lambda x: get_url_region(str(x)))
+  df['root_domain'] = df['pri_domain'].apply(lambda x: extract_root_domain(str(x)))
+# Apply hash encoding to the categorical feature
+  df['root_domain'] = df['root_domain'].apply(hash_encode)
+  df['url_region'] = df['url_region'].apply(hash_encode)
+
+  df['whois_verified'] = df['url'].apply(lambda x: performwhois(x))
+
+  df = df[['A', 'AAAA', 'NS', 'MX', 'DNSSEC Validation', 'use_of_ip', 'abnormal_url', 
+        'count.', 'count-www', 'count@', 'count_dir', 'count_embed_domian', 
+        'short_url', 'count-https', 'sus_url', 'count-digits', 'count-letters', 
+        'fd_length', 'tld_length', 'count-http', 'count%', 'count?', 
+        'count-', 'count=', 'url_length', 'hostname_length', 'url_region',
+        'root_domain', 'whois_verified']]
+
+  return df
+
+# Function to check if the URL is legitimate or phishing
+def check_phishing(df):
+    if df.empty:
+        return "Error: Please enter a valid URL."
+    model = pkl.load(open("best_model.pkl", "rb"))
+    df = feature_extraction(df)
+    le = pkl.load(open("le.pkl", "rb"))
+    value = le.inverse_transform(model.predict(df))
+    return value
+
+def main():
+    st.set_page_config(page_title="Phishing URL Detector", page_icon="🕵️‍♂️")
+    
+    # Custom CSS for styling
+    st.markdown("""
+    <style>
+    body {
+        color: #333333;
+        background-color: #f5f5f5;
+    }
+    .stButton button {
+        background-color: #4CAF50;
+        color: white;
+    }
+    .stTextInput input {
+        background-color: #ffffff;
+        color: #333333;
+    }
+    .logo {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        max-width: 10px;
+    }
+    .result-badge {
+        display: inline-block;
+        padding: 5px 10px;
+        font-size: 18px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    .legitimate {
+        background-color: #2ecc71;
+        color: white;
+        animation: balloon-run 1s infinite;
+    }
+    .phishing {
+        background-color: #e74c3c;
+        color: white;
+        animation: warning 0.5s infinite;
+    }
+
+    @keyframes balloon-run {
+        0% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0); }
+    }
+
+    @keyframes warning {
+        0% { transform: translateX(0); }
+        25% { transform: translateX(-5px); }
+        75% { transform: translateX(5px); }
+        100% { transform: translateX(0); }
+    }
+
+    .stColumn {
+        display: flex;
+        justify-content: space-between;
+    }
+    
+    .stColumn button {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        margin: 5px 0;
+        text-align: center;
+        background-color: #007bff;
+        color: #fff;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .stColumn button:hover {
+        background-color: #0056b3;
+    }   
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Logo
+    logo_image = Image.open("logo.png")
+    logo_image_resized = logo_image.resize((150, 150))
+    st.image(logo_image_resized, use_column_width=False, caption="Logo",width=100)
+    
+    st.title("Phishing URL Detector")
+    st.write("Enter a URL to check if it's legitimate or phishing.")
+
+    # User input: URL
+    user_input = st.text_input("Enter URL here:", "")
+    domain_name = get_domain(user_input)
+
+    show_result = False
+    result_message = ""
+
+    if st.button("Check"):
+        if user_input:
+            # Call the check_phishing function
+            df = pd.DataFrame({'url': [user_input]})
+            result = check_phishing(df)
+
+            # Determine result message and set the flag to show result
+            if result == "legitimate":
+                result_message = "✅ Legitimate"
+            else:
+                result_message = "⚠️ Phishing"
+            show_result = True
+        else:
+            st.warning("Please enter a URL.")
+
+
+    whois_response = whois_lookup(domain_name)
+    relevant_info = extract_whois_data(whois_response)
+
+    response = is_phishing_website(user_input)
+
+    data = get_dns_records(user_input)
+    flattened_data = []
+    for key, value in data.items():
+        if value != None and value != [] and value != '':
+            if isinstance(value, list) :
+                flattened_data.extend([(key, item) for item in value])
+            else:
+                flattened_data.append((key, value))
+
+    col1, col2, col3 = st.columns(3)
+
+    if relevant_info and col1.button("Whois Lookup", key="whois_btn"):
+        whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
+        st.table(whois_df)
+
+    if response and col2.button("SSL Lookup", key="ssl_btn"):
+        ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value']) #, columns=['Subject', 'Issuer','Not Before','Not After']
+        st.table(ssl_response)
+
+    if flattened_data and col3.button("DNS Lookup", key="dns_btn" ):
+        dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
+        st.table(dns_response)
+
+    
+    # if(relevant_info):
+    #     if st.button("Whois Lookup"):
+            
+    #         whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
+    #         st.table(whois_df)
+
+    
+    # if response:
+    #     if st.button("SSL Lookup"):
+    #         ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value']) #, columns=['Subject', 'Issuer','Not Before','Not After']
+    #         st.table(ssl_response)
+
+    
+    # data = get_dns_records(user_input)
+
+    # flattened_data = []
+    # for key, value in data.items():
+    #     if value != None and value != [] and value != '':
+    #         if isinstance(value, list) :
+    #             flattened_data.extend([(key, item) for item in value])
+    #         else:
+    #             flattened_data.append((key, value))
+    # if flattened_data:
+    #     if st.button("DNS Lookup"):
+    #         dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
+    #         st.table(dns_response)
+
+    # Display the result if the "Check" button was clicked
+    if show_result:
+        # st.markdown(f"<div class='result-badge'>{result_message}</div>", unsafe_allow_html=True)
+        if result == "legitimate":
+            st.markdown("<div class='result-badge legitimate'>✅ Legitimate</div>", unsafe_allow_html=True)
+            st.markdown("<div class='balloon-run'>🎈🎈🎈</div>", unsafe_allow_html=True)
+            st.markdown("<style>body{background-color: #ddffdd;}</style>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='result-badge phishing'>⚠️ Phishing</div>", unsafe_allow_html=True)
+            st.markdown("<div class='warning'>⚠️⚠️⚠️</div>", unsafe_allow_html=True)
+
+    api_key = 'a0129d87df217a'
+    # domain_name = get_domain(user_input)
+
+    if user_input:
+        try:
+            ipv4_records = dns.resolver.resolve(domain_name, 'A')
+            addresses = [record.address for record in ipv4_records]
+
+            location_data = []
+            for ip_address in addresses:
+                result = get_geolocation(ip_address, api_key)
+                if result:
+                    latitude = result['latitude']
+                    longitude = result['longitude']
+                    if latitude and longitude:  # Check if latitude and longitude are available
+                        location_data.append((latitude, longitude))
+
+            if location_data:
+                map = folium.Map(location=[location_data[0][0], location_data[0][1]], zoom_start=6)
+                for lat, lon in location_data:
+                    folium.Marker(location=[lat, lon], tooltip="Location").add_to(map)
+
+                folium_static(map)
+            else:
+                st.write("No valid geolocation data available for the given domains.")
+
+        except dns.resolver.NXDOMAIN:
+            st.write(f"Domain '{user_input}' does not exist.")
+        except dns.resolver.NoAnswer:
+            st.write(f"No DNS records found for '{user_input}'.")
+        except dns.exception.DNSException as e:
+            st.write(f"Error resolving domain '{user_input}': {e}")
+    
+   
+
+if __name__ == "__main__":
+    main()
