@@ -378,6 +378,65 @@ def get_url_region(primary_domain):
 
     return "Global"
 
+# def get_domain(url):
+#     # Extract the domain from the URL
+#     parsed_url = urlparse(url)
+#     domain = parsed_url.netloc
+#     return domain
+
+def fetch_certificate(url):
+    domain = get_domain(url)
+    try:
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname=url) as s:
+            s.settimeout(5)  # Set a timeout value of 5 seconds
+            try:
+                s.connect((domain, 443))
+            except (ConnectionRefusedError, OSError):
+                return -1
+            cert = s.getpeercert()
+        return cert
+    except (ssl.SSLError, socket.gaierror, socket.timeout, ConnectionResetError, FileNotFoundError,OSError) as e:
+        return -1
+
+def is_valid_certificate(url):
+    try:
+        cert = fetch_certificate(url)
+        if cert == -1:
+            return -1
+        return 1
+    except:
+        return -1
+
+def is_recently_issued(url):
+    try:
+        cert = fetch_certificate(url)
+        if cert == -1:
+            return -1
+        cert_issue_date = datetime.strptime(cert['notBefore'], "%b %d %H:%M:%S %Y %Z")
+        ten_days_ago = datetime.now() - timedelta(days=10)
+        if cert_issue_date > ten_days_ago:
+            return 1
+        else:
+            return 0
+    except:
+        return -1
+
+def is_trusted_issuer(url):
+    try:
+        cert = fetch_certificate(url)
+        if cert == -1:
+            return -1
+        issuer = dict(x[0] for x in cert['issuer'])
+        issuer_cn = issuer.get('commonName', '')
+        trusted_CAs = ["DigiCert", "GlobalSign", "Comodo", "Symantec", "Thawte", "R3", "GoDaddy", "Network Solutions", "GTS CA", "Cloudflare Inc ECC"]
+        if any(issuer_cn.startswith(ca) for ca in trusted_CAs):
+            return 1
+        else:
+            return 0
+    except:
+        return -1
+
 def extract_root_domain(url):
     extracted = tldextract.extract(url)
     root_domain = extracted.domain
@@ -386,21 +445,6 @@ def extract_root_domain(url):
 def hash_encode(category):
     hash_object = hashlib.md5(category.encode())
     return int(hash_object.hexdigest(),16)%(10**8)
-
-def get_ssl_certificate(url):
-    try:
-        hostname = url.replace("https://", "").replace("http://", "")
-        cert = ssl.get_server_certificate((hostname, 443))
-        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
-        certificate = {
-            'subject': dict(x509.get_subject().get_components()),
-            'issuer': dict(x509.get_issuer().get_components()),
-            'notBefore': x509.get_notBefore().decode('utf-8'),
-            'notAfter': x509.get_notAfter().decode('utf-8'),
-        }
-        return certificate
-    except Exception as e:
-        return None
 
 def get_ssl_certificate(url):
     try:
@@ -496,6 +540,7 @@ def get_dns_records(url):
     
     return dns_store
 
+
 def feature_extraction(df):
   #try
   df['domain'] = df['url'].apply(lambda i: get_domain(i))
@@ -538,12 +583,20 @@ def feature_extraction(df):
 
   df['whois_verified'] = df['url'].apply(lambda x: performwhois(x))
 
-  df = df[['A', 'AAAA', 'NS', 'MX', 'DNSSEC Validation', 'use_of_ip', 'abnormal_url', 
-        'count.', 'count-www', 'count@', 'count_dir', 'count_embed_domian', 
-        'short_url', 'count-https', 'sus_url', 'count-digits', 'count-letters', 
-        'fd_length', 'tld_length', 'count-http', 'count%', 'count?', 
-        'count-', 'count=', 'url_length', 'hostname_length', 'url_region',
-        'root_domain', 'whois_verified']]
+  df['cert'] = df['pri_domain'].apply(lambda i: fetch_certificate(i))
+  #df['cert'] = df['cert'].apply(lambda x: x[1] if x[0] is None else None)
+
+  df['valid_cert'] = df['cert'].apply(lambda i: is_valid_certificate(i))
+  df['recent_issue'] = df['cert'].apply(lambda i: is_recently_issued(i))
+  df['trusted_issue'] = df['cert'].apply(lambda i: is_trusted_issuer(i))
+
+  df = df[['A', 'AAAA', 'NS', 'MX', 'DNSSEC Validation',
+       'valid_cert', 'recent_issue', 'trusted_issue', 'use_of_ip',
+       'abnormal_url', 'count.', 'count-www', 'count@', 'count_dir',
+       'count_embed_domian', 'short_url', 'count-https', 'sus_url',
+       'count-digits', 'count-letters', 'fd_length', 'tld_length',
+       'count-http', 'count%', 'count?', 'count-', 'count=', 'url_length',
+       'hostname_length', 'url_region', 'root_domain', 'whois_verified']]
 
   return df
 
@@ -551,9 +604,9 @@ def feature_extraction(df):
 def check_phishing(df):
     if df.empty:
         return "Error: Please enter a valid URL."
-    model = pkl.load(open("best_model.pkl", "rb"))
+    model = pkl.load(open("best_model_final.pkl", "rb"))
     df = feature_extraction(df)
-    le = pkl.load(open("le.pkl", "rb"))
+    le = pkl.load(open("linear.pkl", "rb"))
     value = le.inverse_transform(model.predict(df))
     return value
 
