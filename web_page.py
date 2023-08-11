@@ -378,17 +378,19 @@ def get_url_region(primary_domain):
 
     return "Global"
 
-# def get_domain(url):
-#     # Extract the domain from the URL
-#     parsed_url = urlparse(url)
-#     domain = parsed_url.netloc
-#     return domain
+def get_domain_x(url):
+    # Extract the domain from the URL
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc
+    return domain
+
+valid = True
 
 def fetch_certificate(url):
-    domain = get_domain(url)
+    domain = get_domain_x(url)
     try:
         ctx = ssl.create_default_context()
-        with ctx.wrap_socket(socket.socket(), server_hostname=url) as s:
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
             s.settimeout(5)  # Set a timeout value of 5 seconds
             try:
                 s.connect((domain, 443))
@@ -396,13 +398,18 @@ def fetch_certificate(url):
                 return -1
             cert = s.getpeercert()
         return cert
-    except (ssl.SSLError, socket.gaierror, socket.timeout, ConnectionResetError, FileNotFoundError,OSError) as e:
+    except (ssl.SSLError, socket.gaierror, socket.timeout, ConnectionResetError, FileNotFoundError, OSError) as e:
         return -1
+    except ValueError as ve:
+        if "check_hostname requires server_hostname" in str(ve):
+            return -2  # This code indicates the specific error case
+        else:
+            raise
 
 def is_valid_certificate(url):
     try:
         cert = fetch_certificate(url)
-        if cert == -1:
+        if cert == -1 or cert == -2:
             return -1
         return 1
     except:
@@ -411,7 +418,7 @@ def is_valid_certificate(url):
 def is_recently_issued(url):
     try:
         cert = fetch_certificate(url)
-        if cert == -1:
+        if cert == -1 or cert==-2:
             return -1
         cert_issue_date = datetime.strptime(cert['notBefore'], "%b %d %H:%M:%S %Y %Z")
         ten_days_ago = datetime.now() - timedelta(days=10)
@@ -425,7 +432,8 @@ def is_recently_issued(url):
 def is_trusted_issuer(url):
     try:
         cert = fetch_certificate(url)
-        if cert == -1:
+        if cert == -1 or cert ==-2:
+            valid = False
             return -1
         issuer = dict(x[0] for x in cert['issuer'])
         issuer_cn = issuer.get('commonName', '')
@@ -665,28 +673,24 @@ def main():
         100% { transform: translateX(0); }
     }
 
-    .stColumn {
-        display: flex;
-        justify-content: space-between;
-    }
-    
-    .stColumn button {
-        display: block;
-        width: 100%;
-        padding: 10px;
-        margin: 5px 0;
-        text-align: center;
-        background-color: #007bff;
-        color: #fff;
-        border: none;
+    .stCheckbox > div > label {
+        border: 1px solid #3f8abf;
+        background-color: #3f8abf;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 5px;
         cursor: pointer;
     }
-    
-    .stColumn button:hover {
-        background-color: #0056b3;
+    .stCheckbox > div > label > span {
+        display: none;
+    }
+    .stCheckbox > div > input:checked + label {
+        background-color: #f7f7f7;
+        color: #3f8abf;
     }   
     </style>
     """, unsafe_allow_html=True)
+    flag=True
 
     # Logo
     logo_image = Image.open("logo.png")
@@ -697,127 +701,116 @@ def main():
     st.write("Enter a URL to check if it's legitimate or phishing.")
 
     # User input: URL
-    user_input = st.text_input("Enter URL here:", "")
-    domain_name = get_domain(user_input)
+    user_input = st.text_input("Enter URL here:","")
+    if("https://" not in user_input and "http://" not in user_input):
+        flag=False
+        st.warning("Please enter the full URL including the 'https://' or 'http://' protocol.")
+    domain_name = get_domain_x(user_input)
+    if flag:
+        show_result = False
+        result_message = ""
+        is_trusted_issuer(user_input) #to check the validity of the url
+        # print(valid) 
 
-    show_result = False
-    result_message = ""
+        if st.checkbox("Check"):
+            if user_input:
+                # Call the check_phishing function
+                df = pd.DataFrame({'url': [user_input]})
+                result = check_phishing(df)
 
-    if st.button("Check"):
-        if user_input:
-            # Call the check_phishing function
-            df = pd.DataFrame({'url': [user_input]})
-            result = check_phishing(df)
-
-            # Determine result message and set the flag to show result
-            if result == "legitimate":
-                result_message = "✅ Legitimate"
+                # Determine result message and set the flag to show result
+                if result == "legitimate":
+                    result_message = "✅ Legitimate"
+                else:
+                    result_message = "⚠️ Phishing"
+                show_result = True
+                # Display the result if the "Check" button was clicked
+            elif(not valid):
+                st.warning("Please enter a valid URL.")
             else:
-                result_message = "⚠️ Phishing"
-            show_result = True
-        else:
-            st.warning("Please enter a URL.")
+                st.warning("Please enter a URL.")
+
+        if show_result:
+                    # st.markdown(f"<div class='result-badge'>{result_message}</div>", unsafe_allow_html=True)
+                    if result == "legitimate":
+                        st.markdown("<div class='result-badge legitimate'>✅ Legitimate</div>", unsafe_allow_html=True)
+                        st.markdown("<div class='balloon-run'>🎈🎈🎈</div>", unsafe_allow_html=True)
+                        st.markdown("<style>body{background-color: #ddffdd;}</style>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div class='result-badge phishing'>⚠️ Phishing</div>", unsafe_allow_html=True)
+                        st.markdown("<div class='warning'>⚠️⚠️⚠️</div>", unsafe_allow_html=True)
 
 
-    whois_response = whois_lookup(domain_name)
-    relevant_info = extract_whois_data(whois_response)
+        whois_response = whois_lookup(domain_name)
+        relevant_info = extract_whois_data(whois_response)
 
-    response = is_phishing_website(user_input)
+        response = is_phishing_website(user_input)
 
-    data = get_dns_records(user_input)
-    flattened_data = []
-    for key, value in data.items():
-        if value != None and value != [] and value != '':
-            if isinstance(value, list) :
-                flattened_data.extend([(key, item) for item in value])
-            else:
-                flattened_data.append((key, value))
+        data = get_dns_records(user_input)
+        flattened_data = []
+        for key, value in data.items():
+            if value != None and value != [] and value != '':
+                if isinstance(value, list) :
+                    flattened_data.extend([(key, item) for item in value])
+                else:
+                    flattened_data.append((key, value))
 
-    col1, col2, col3 = st.columns(3)
 
-    if relevant_info and col1.button("Whois Lookup", key="whois_btn"):
-        whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
-        st.table(whois_df)
+        show_info = False
 
-    if response and col2.button("SSL Lookup", key="ssl_btn"):
-        ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value']) #, columns=['Subject', 'Issuer','Not Before','Not After']
-        st.table(ssl_response)
+        # Define the buttons
+        if st.checkbox("Show Information"):
+            show_info = not show_info
 
-    if flattened_data and col3.button("DNS Lookup", key="dns_btn" ):
-        dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
-        st.table(dns_response)
+        # Display the relevant information based on the show_info state
+        if show_info:
+            if relevant_info:
+                whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
+                st.write("Whois Lookup:")
+                st.table(whois_df)
 
-    
-    # if(relevant_info):
-    #     if st.button("Whois Lookup"):
+            if response:
+                ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value'])
+                st.write("SSL Lookup:")
+                st.table(ssl_response)
+
+            if flattened_data:
+                dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
+                st.write("DNS Lookup:")
+                st.table(dns_response)
             
-    #         whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
-    #         st.table(whois_df)
+            
+            
+        api_key = 'a0129d87df217a'
+        if user_input:
+            try:
+                ipv4_records = dns.resolver.resolve(domain_name, 'A')
+                addresses = [record.address for record in ipv4_records]
 
-    
-    # if response:
-    #     if st.button("SSL Lookup"):
-    #         ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value']) #, columns=['Subject', 'Issuer','Not Before','Not After']
-    #         st.table(ssl_response)
+                location_data = []
+                for ip_address in addresses:
+                    result = get_geolocation(ip_address, api_key)
+                    if result:
+                        latitude = result['latitude']
+                        longitude = result['longitude']
+                        if latitude and longitude:  # Check if latitude and longitude are available
+                            location_data.append((latitude, longitude))
 
-    
-    # data = get_dns_records(user_input)
+                if location_data:
+                    map = folium.Map(location=[location_data[0][0], location_data[0][1]], zoom_start=6)
+                    for lat, lon in location_data:
+                        folium.Marker(location=[lat, lon], tooltip="Location").add_to(map)
 
-    # flattened_data = []
-    # for key, value in data.items():
-    #     if value != None and value != [] and value != '':
-    #         if isinstance(value, list) :
-    #             flattened_data.extend([(key, item) for item in value])
-    #         else:
-    #             flattened_data.append((key, value))
-    # if flattened_data:
-    #     if st.button("DNS Lookup"):
-    #         dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
-    #         st.table(dns_response)
+                    folium_static(map)
+                else:
+                    st.write("No valid geolocation data available for the given domains.")
 
-    # Display the result if the "Check" button was clicked
-    if show_result:
-        # st.markdown(f"<div class='result-badge'>{result_message}</div>", unsafe_allow_html=True)
-        if result == "legitimate":
-            st.markdown("<div class='result-badge legitimate'>✅ Legitimate</div>", unsafe_allow_html=True)
-            st.markdown("<div class='balloon-run'>🎈🎈🎈</div>", unsafe_allow_html=True)
-            st.markdown("<style>body{background-color: #ddffdd;}</style>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='result-badge phishing'>⚠️ Phishing</div>", unsafe_allow_html=True)
-            st.markdown("<div class='warning'>⚠️⚠️⚠️</div>", unsafe_allow_html=True)
-
-    api_key = 'a0129d87df217a'
-    # domain_name = get_domain(user_input)
-
-    if user_input:
-        try:
-            ipv4_records = dns.resolver.resolve(domain_name, 'A')
-            addresses = [record.address for record in ipv4_records]
-
-            location_data = []
-            for ip_address in addresses:
-                result = get_geolocation(ip_address, api_key)
-                if result:
-                    latitude = result['latitude']
-                    longitude = result['longitude']
-                    if latitude and longitude:  # Check if latitude and longitude are available
-                        location_data.append((latitude, longitude))
-
-            if location_data:
-                map = folium.Map(location=[location_data[0][0], location_data[0][1]], zoom_start=6)
-                for lat, lon in location_data:
-                    folium.Marker(location=[lat, lon], tooltip="Location").add_to(map)
-
-                folium_static(map)
-            else:
-                st.write("No valid geolocation data available for the given domains.")
-
-        except dns.resolver.NXDOMAIN:
-            st.write(f"Domain '{user_input}' does not exist.")
-        except dns.resolver.NoAnswer:
-            st.write(f"No DNS records found for '{user_input}'.")
-        except dns.exception.DNSException as e:
-            st.write(f"Error resolving domain '{user_input}': {e}")
+            except dns.resolver.NXDOMAIN:
+                st.write(f"Domain '{user_input}' does not exist.")
+            except dns.resolver.NoAnswer:
+                st.write(f"No DNS records found for '{user_input}'.")
+            except dns.exception.DNSException as e:
+                st.write(f"Error resolving domain '{user_input}': {e}")
     
    
 
