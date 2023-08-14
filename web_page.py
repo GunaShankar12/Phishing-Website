@@ -769,7 +769,7 @@ def main():
 
     # User input: URL
     user_input = st.text_input("Enter URL here:","")
-    if("https://" not in user_input and "http://" not in user_input):
+    if("https://" not in user_input and "http://" not in user_input) and user_input:
         flag=False
         st.warning("Please enter the full URL including the 'https://' or 'http://' protocol.")
     domain_name = get_domain_x(user_input)
@@ -846,7 +846,7 @@ def main():
                     open_ports = scan_ports(host_name, ports_search)
                     open_ports = [port_services[port] for port in open_ports]
                     open_ports = pd.DataFrame(open_ports, columns=['Open Ports'])
-                    st.write("<h2 style='color: white;'>List of Open Ports:</h2>", unsafe_allow_html=True)
+                    st.write("<h4 style='color: white;'>List of Open Ports:</h4>", unsafe_allow_html=True)
                     # for port in open_ports:
                     #     st.write(f"<p style='margin: 0;'>{port}</p>", unsafe_allow_html=True)
                     st.table(open_ports)
