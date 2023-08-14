@@ -706,7 +706,6 @@ def main():
         flag=False
         st.warning("Please enter the full URL including the 'https://' or 'http://' protocol.")
     domain_name = get_domain_x(user_input)
-    print("flag:",flag)
     if flag:
         show_result = False
         result_message = ""
