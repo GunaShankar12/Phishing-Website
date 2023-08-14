@@ -2,7 +2,6 @@ import streamlit as st
 from PIL import Image
 import re
 import pandas as pd
-from urllib.parse import urlparse
 from tld import get_tld
 import tldextract
 import pickle as pkl
@@ -12,9 +11,11 @@ import requests
 import dns.resolver
 import folium
 from streamlit_folium import folium_static
+from streamlit import session_state as ss 
 import hashlib
 from datetime import datetime
 import OpenSSL,ssl
+import concurrent.futures
 
 def get_domain(url):
     parser = urlparse(url)
@@ -618,6 +619,22 @@ def check_phishing(df):
     value = le.inverse_transform(model.predict(df))
     return value
 
+def scan_ports(target_host, port_list, timeout=1):
+    open_ports = []
+    
+    def scan(port):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((target_host, port))
+        if result == 0:
+            open_ports.append(port)
+        sock.close()
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(scan, port_list)
+    
+    return open_ports
+
 def main():
     st.set_page_config(page_title="Phishing URL Detector", page_icon="🕵️‍♂️")
     
@@ -627,10 +644,6 @@ def main():
     body {
         color: #333333;
         background-color: #f5f5f5;
-    }
-    .stButton button {
-        background-color: #4CAF50;
-        color: white;
     }
     .stTextInput input {
         background-color: #ffffff;
@@ -691,7 +704,58 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     flag=True
-
+    port_services = {
+        21: "FTP (File Transfer Protocol) - Port 21",
+        22: "SSH (Secure Shell) - Port 22",
+        23: "Telnet - Port 23",
+        25: "SMTP (Simple Mail Transfer Protocol) - Port 25",
+        53: "DNS (Domain Name System) - Port 53",
+        80: "HTTP (Hypertext Transfer Protocol) - Port 80",
+        110: "POP3 (Post Office Protocol 3) - Port 110",
+        123: "NTP (Network Time Protocol) - Port 123",
+        135: "MS RPC (Microsoft Remote Procedure Call) - Port 135",
+        139: "NetBIOS - Port 139",
+        143: "IMAP (Internet Message Access Protocol) - Port 143",
+        161: "SNMP (Simple Network Management Protocol) - Port 161",
+        443: "HTTPS (HTTP Secure) - Port 443",
+        445: "Microsoft-DS (Microsoft Directory Services) - Port 445",
+        465: "SMTPS (SMTP over TLS/SSL) - Port 465",
+        514: "Syslog - Port 514",
+        587: "Submission (Email Message Submission) - Port 587",
+        993: "IMAPS (IMAP over TLS/SSL) - Port 993",
+        995: "POP3S (POP3 over TLS/SSL) - Port 995",
+        1433: "MSSQL (Microsoft SQL Server) - Port 1433",
+        1521: "Oracle Database Default Listener - Port 1521",
+        3306: "MySQL Database - Port 3306",
+        3389: "RDP (Remote Desktop Protocol) - Port 3389",
+        5432: "PostgreSQL Database - Port 5432",
+        5900: "VNC (Virtual Network Computing) - Port 5900",
+        5985: "WinRM (Windows Remote Management) - Port 5985",
+        6379: "Redis Database - Port 6379",
+        6666: "IRC (Internet Relay Chat) - Port 6666",
+        6800: "HTTP Proxy (Proxy Servers) - Port 6800",
+        8080: "Alternative HTTP Port - Port 8080",
+        8888: "Alternative HTTP Port - Port 8888",
+        9000: "Alternative HTTP Port - Port 9000",
+        9200: "Elasticsearch REST API - Port 9200",
+        9418: "Git Version Control System - Port 9418",
+        27017: "MongoDB Database - Port 27017",
+        27018: "MongoDB Shardsvr - Port 27018",
+        27019: "MongoDB Mongos - Port 27019",
+        28017: "MongoDB Web Interface - Port 28017",
+        33060: "MySQL X Protocol - Port 33060",
+        3690: "Subversion (SVN) - Port 3690",
+        50000: "IBM DB2 Database - Port 50000",
+        51413: "BitTorrent - Port 51413",
+        5500: "VNC Remote Desktop - Port 5500",
+        5672: "AMQP (Advanced Message Queuing Protocol) - Port 5672",
+        5984: "CouchDB Database - Port 5984",
+        6667: "IRC (Alternative Port) - Port 6667",
+        8000: "Alternative HTTP Port - Port 8000",
+        8081: "Alternative HTTP Port - Port 8081",
+        8443: "HTTPS Alternative Port - Port 8443",
+        9090: "Alternative HTTP Port - Port 9090"
+    }
     # Logo
     logo_image = Image.open("logo.png")
     logo_image_resized = logo_image.resize((150, 150))
@@ -707,12 +771,19 @@ def main():
         st.warning("Please enter the full URL including the 'https://' or 'http://' protocol.")
     domain_name = get_domain_x(user_input)
     if flag:
-        show_result = False
-        result_message = ""
         is_trusted_issuer(user_input) #to check the validity of the url
         # print(valid) 
 
-        if st.checkbox("Check"):
+        if 'button_1' not in ss:
+            ss.button_1 = 0
+        if 'button_2' not in ss:
+            ss.button_2 = 0
+
+        def count(key):
+            ss[key] += 1
+        st.button("Check",on_click=count, args=('button_1',))
+        check = bool(ss.button_1 % 2)
+        if check:
             if user_input:
                 # Call the check_phishing function
                 df = pd.DataFrame({'url': [user_input]})
@@ -720,97 +791,95 @@ def main():
 
                 # Determine result message and set the flag to show result
                 if result == "legitimate":
-                    result_message = "✅ Legitimate"
+                    st.markdown("<div class='result-badge legitimate'>✅ Legitimate</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='balloon-run'>🎈🎈🎈</div>", unsafe_allow_html=True)
+                    st.markdown("<style>body{background-color: #ddffdd;}</style>", unsafe_allow_html=True)
                 else:
-                    result_message = "⚠️ Phishing"
-                show_result = True
-                # Display the result if the "Check" button was clicked
-            elif(not valid):
-                st.warning("Please enter a valid URL.")
+                    st.markdown("<div class='result-badge phishing'>⚠️ Phishing</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='warning'>⚠️⚠️⚠️</div>", unsafe_allow_html=True)
+
             else:
                 st.warning("Please enter a URL.")
 
-        if show_result:
-                    # st.markdown(f"<div class='result-badge'>{result_message}</div>", unsafe_allow_html=True)
-                    if result == "legitimate":
-                        st.markdown("<div class='result-badge legitimate'>✅ Legitimate</div>", unsafe_allow_html=True)
-                        st.markdown("<div class='balloon-run'>🎈🎈🎈</div>", unsafe_allow_html=True)
-                        st.markdown("<style>body{background-color: #ddffdd;}</style>", unsafe_allow_html=True)
+            whois_response = whois_lookup(domain_name)
+            relevant_info = extract_whois_data(whois_response)
+
+            response = is_phishing_website(user_input)
+
+            data = get_dns_records(user_input)
+            flattened_data = []
+            for key, value in data.items():
+                if value != None and value != [] and value != '':
+                    if isinstance(value, list) :
+                        flattened_data.extend([(key, item) for item in value])
                     else:
-                        st.markdown("<div class='result-badge phishing'>⚠️ Phishing</div>", unsafe_allow_html=True)
-                        st.markdown("<div class='warning'>⚠️⚠️⚠️</div>", unsafe_allow_html=True)
+                        flattened_data.append((key, value))
 
 
-        whois_response = whois_lookup(domain_name)
-        relevant_info = extract_whois_data(whois_response)
+            st.button("Show Information",on_click=count, args=('button_2',))
+            show_info= bool(ss.button_2 % 2)
+            if show_info:
+                if relevant_info:
+                    whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
+                    st.write("Whois Lookup:")
+                    st.table(whois_df)
 
-        response = is_phishing_website(user_input)
+                if response:
+                    ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value'])
+                    st.write("SSL Lookup:")
+                    st.table(ssl_response)
 
-        data = get_dns_records(user_input)
-        flattened_data = []
-        for key, value in data.items():
-            if value != None and value != [] and value != '':
-                if isinstance(value, list) :
-                    flattened_data.extend([(key, item) for item in value])
-                else:
-                    flattened_data.append((key, value))
+                if flattened_data:
+                    dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
+                    st.write("DNS Lookup:")
+                    st.table(dns_response)
 
+                st.write("Port Scan")
+                ports_search = st.multiselect("Select ports to scan", list(port_services.values()), default=["HTTP (Hypertext Transfer Protocol) - Port 80","HTTPS (HTTP Secure) - Port 443"])
+                ports_search =  [ int(x.split(" - Port ")[1]) for x in ports_search]
+                if st.button("Scan"):
+                    parsed_url = urlparse(user_input)
+                    host_name = parsed_url.hostname
+                    open_ports = scan_ports(host_name, ports_search)
+                    open_ports = [port_services[port] for port in open_ports]
+                    open_ports = pd.DataFrame(open_ports, columns=['Open Ports'])
+                    st.write("<h2 style='color: white;'>List of Open Ports:</h2>", unsafe_allow_html=True)
+                    # for port in open_ports:
+                    #     st.write(f"<p style='margin: 0;'>{port}</p>", unsafe_allow_html=True)
+                    st.table(open_ports)
 
-        show_info = False
+                st.write("\n")                                    
+                api_key = 'a0129d87df217a'
+                if user_input:
+                    try:
+                        ipv4_records = dns.resolver.resolve(domain_name, 'A')
+                        addresses = [record.address for record in ipv4_records]
 
-        # Define the buttons
-        if st.checkbox("Show Information"):
-            show_info = not show_info
+                        location_data = []
+                        for ip_address in addresses:
+                            result = get_geolocation(ip_address, api_key)
+                            if result:
+                                latitude = result['latitude']
+                                longitude = result['longitude']
+                                if latitude and longitude:  # Check if latitude and longitude are available
+                                    location_data.append((latitude, longitude))
 
-        # Display the relevant information based on the show_info state
-        if show_info:
-            if relevant_info:
-                whois_df = pd.DataFrame(relevant_info.items(), columns=['Property', 'Value'])
-                st.write("Whois Lookup:")
-                st.table(whois_df)
+                        if location_data:
+                            st.write("Geolocation data:")
+                            map = folium.Map(location=[location_data[0][0], location_data[0][1]], zoom_start=6)
+                            for lat, lon in location_data:
+                                folium.Marker(location=[lat, lon], tooltip="Location").add_to(map)
 
-            if response:
-                ssl_response = pd.DataFrame(response.items(), columns=['Property', 'Value'])
-                st.write("SSL Lookup:")
-                st.table(ssl_response)
+                            folium_static(map)
+                        else:
+                            st.write("No valid geolocation data available for the given domains.")
 
-            if flattened_data:
-                dns_response = pd.DataFrame(flattened_data, columns=['Type', 'Value'])
-                st.write("DNS Lookup:")
-                st.table(dns_response)
-            
-            
-            
-        api_key = 'a0129d87df217a'
-        if user_input:
-            try:
-                ipv4_records = dns.resolver.resolve(domain_name, 'A')
-                addresses = [record.address for record in ipv4_records]
-
-                location_data = []
-                for ip_address in addresses:
-                    result = get_geolocation(ip_address, api_key)
-                    if result:
-                        latitude = result['latitude']
-                        longitude = result['longitude']
-                        if latitude and longitude:  # Check if latitude and longitude are available
-                            location_data.append((latitude, longitude))
-
-                if location_data:
-                    map = folium.Map(location=[location_data[0][0], location_data[0][1]], zoom_start=6)
-                    for lat, lon in location_data:
-                        folium.Marker(location=[lat, lon], tooltip="Location").add_to(map)
-
-                    folium_static(map)
-                else:
-                    st.write("No valid geolocation data available for the given domains.")
-
-            except dns.resolver.NXDOMAIN:
-                st.write(f"Domain '{user_input}' does not exist.")
-            except dns.resolver.NoAnswer:
-                st.write(f"No DNS records found for '{user_input}'.")
-            except dns.exception.DNSException as e:
-                st.write(f"Error resolving domain '{user_input}': {e}")
+                    except dns.resolver.NXDOMAIN:
+                        st.write(f"Domain '{user_input}' does not exist.")
+                    except dns.resolver.NoAnswer:
+                        st.write(f"No DNS records found for '{user_input}'.")
+                    except dns.exception.DNSException as e:
+                        st.write(f"Error resolving domain '{user_input}': {e}")
     
    
 
