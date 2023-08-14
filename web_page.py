@@ -769,7 +769,7 @@ def main():
 
     # User input: URL
     user_input = st.text_input("Enter URL here:","")
-    if("https://" not in user_input and "http://" not in user_input) and user_input:
+    if (len(user_input)>0) and ("https://" not in user_input and "http://" not in user_input) :
         flag=False
         st.warning("Please enter the full URL including the 'https://' or 'http://' protocol.")
     domain_name = get_domain_x(user_input)
