@@ -883,6 +883,7 @@ def main():
                         st.write(f"No DNS records found for '{user_input}'.")
                     except dns.exception.DNSException as e:
                         st.write(f"Error resolving domain '{user_input}': {e}")
-    
- if __name__ == "__main__":
-     main()
+                        
+                        
+if __name__ == "__main__":
+    main()
