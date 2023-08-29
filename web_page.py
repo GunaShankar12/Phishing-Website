@@ -885,4 +885,4 @@ def main():
                         st.write(f"Error resolving domain '{user_input}': {e}")
     
  if __name__ == "__main__":
-    main()
+     main()
